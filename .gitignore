@@ -23,3 +23,6 @@ inbox/
 imports/
 reports/
 .DS_Store
+paper_preferences.json
+preference_history/
+maintenance/

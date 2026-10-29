@@ -11,3 +11,7 @@ Validated locally on macOS arm64, Python 3.12, 2026-10-28:
 No live answer-model invocation or paid API call was made for these tests. Mock usage values are fixtures, not measured scientific-call consumption. Coordinator token consumption is unavailable in this release record and is not represented as zero. No scientific benchmark or broad corpus evaluation was run.
 
 GitHub Actions reruns the synthetic test suite in Linux/Python 3.12; its status is separate from this local validation. Transitive dependency resolution and parser model downloads can change environment behavior. Only direct dependencies are version constrained; this is not a fully hermetic build.
+
+## Manual selection update — 2026-10-29
+
+24 synthetic regression tests passed, including modest reranking without overriding clearly stronger relevance, reversible label history, label-restricted retrieval, and read-only MCP label visibility. Tests ran with the repository source directory explicitly on PYTHONPATH. No live answer-model call was used. Labels and scores are user preferences, not new scientific validation.

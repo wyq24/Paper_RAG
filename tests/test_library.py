@@ -58,4 +58,15 @@ class DailyLibraryTest(unittest.TestCase):
  def test_12_missing_fields_fail(self):
   p=execute({'operation':'evidence_checklist','question':'Define labels','extra_fields':[]})
   self.assertEqual(execute({'operation':'audit_answer','checklist_id':p['checklist_id'],'items':[]})['status'],'FAIL')
+ def test_13_label_filter_and_readonly_mcp_visibility(self):
+  from paper_rag import preferences
+  self.lib.mark(self.pid,'citation_discovery')
+  with self.assertRaises(ValueError):self.lib.retrieve('Zorbax',label='manual')
+  self.lib.mark(self.pid,'manual')
+  _,packet=self.lib.retrieve('Zorbax',label='manual')
+  self.assertTrue(packet['evidence'])
+  self.assertTrue(all(e['selection_label']=='manual' for e in packet['evidence']))
+  result=execute({'operation':'list_papers','query':'Zorbax'})
+  self.assertEqual(result['papers'][0]['selection_label'],'manual')
+
 if __name__=='__main__':unittest.main(verbosity=2)

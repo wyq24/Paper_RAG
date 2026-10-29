@@ -52,6 +52,8 @@ class Acquisition:
         doi=item.get('doi','').removeprefix('https://doi.org/').lower();title=item['title']
         if not title.strip():raise ValueError('A verified target title is required')
         matches=[dict(r) for r in lib.db.execute('select paper_id,title,doi,state from papers') if (doi and (r['doi'] or '').lower()==doi) or norm(r['title'])==norm(title)]
+        if matches and item.get('selection_label','manual')=='manual':
+            for r in matches:lib.mark(r['paper_id'],'manual','User explicitly requested existing paper')
         if matches:return {'title':title,'doi':doi,'status':'EXISTING_RECORD','matches':matches}
         for candidate in self.candidates(item):
             raw,http=self.get(candidate['url'])
@@ -66,7 +68,7 @@ class Acquisition:
             digest=hashlib.sha256(raw).hexdigest();pdfpath=self.out/(digest+'.pdf');pdfpath.write_bytes(raw)
             save(self.out/(digest+'_identity.json'),{'target':item,'source':candidate,'pages':pages,'title_match':title_ok,'source_sha256':digest})
             if not title_ok:continue  # Preserve unresolved files but never index them.
-            receipt=lib.ingest(pdfpath,title=title,doi=candidate.get('doi') or doi)
+            receipt=lib.ingest(pdfpath,title=title,doi=candidate.get('doi') or doi,selection_label=item.get('selection_label','manual'))
             return {'title':title,'doi':doi,'source':candidate,'status':receipt['status'],'ingestion':receipt}
         return {'title':title,'doi':doi,'status':'PDF_NOT_OBTAINED_OR_IDENTITY_UNRESOLVED','indexed':False}
 

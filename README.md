@@ -54,6 +54,8 @@ The HTTP URL is `http://127.0.0.1:8765/mcp`. Set `PAPER_RAG_PORT` to change it. 
 | `source_page` | Original PDF page text and optional image |
 | `citation_network` | Read a configured frozen citation snapshot |
 
+Manually supplied papers carry a `manual` label and receive a modest 10% boost within retrieved candidates. Citation-discovery imports retain a separate label. These preferences never raise scientific verification status.
+
 ## Other workflows
 
 - [Daily operations, acquisition and optional answers](docs/OPERATIONS.md)

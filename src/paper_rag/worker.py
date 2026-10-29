@@ -10,6 +10,8 @@ import sys
 from .library import Library, load, sha
 from .config import read_config
 
+from . import preferences
+
 class ReadLibrary(Library):
     def __init__(self):
         self.c = read_config()
@@ -36,7 +38,7 @@ def execute(req):
             term = req['query'].strip()
             if len(term) > 500: raise ValueError('Query too long')
             rows = lib.db.execute("SELECT paper_id,title,doi,verification FROM papers WHERE state='READY' AND (instr(lower(title),lower(?))>0 OR paper_id=? OR doi=?) ORDER BY title", (term,term,term)).fetchall()
-            return {'papers': [dict(r, url=citation_url(r)) for r in rows[:50]], 'total_matches': len(rows), 'truncated': len(rows)>50}
+            return {'papers': [dict(r, url=citation_url(r), **preferences.describe(r["paper_id"],preferences.read(lib.root))) for r in rows[:50]], 'total_matches': len(rows), 'truncated': len(rows)>50}
         if op == 'search':
             q = req['query'].strip()
             if not q or len(q)>2000: raise ValueError('Query must have 1–2000 characters')

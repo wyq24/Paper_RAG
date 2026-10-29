@@ -33,3 +33,7 @@ Prefer the current chat's model with MCP. Optional standalone `ask` requires exp
 Use bounded citation discovery only when requested. Preserve identity confidence, sampling coverage, snapshot dates and exact shared IDs; human review decides relevance. Keep code in GitHub and data in private storage. For a new user repository, honor their destination and sharing request; do not publish data or credentials. Do not automatically alter a running tunnel or workspace permissions.
 
 Stop after the requested operation. Do not launch benchmarks, gold generation, corpus expansion or review loops as incidental verification.
+
+## User selection labels
+
+Directly supplied papers are labeled `manual` by default and receive a 1.10 multiplier when reranking already retrieved candidates. For citation-discovery batches explicitly use `--selection-label citation_discovery` (acquisition manifest: `"selection_label": "citation_discovery"`). Never equate permission to import a discovered batch with individual manual curation. Existing directly requested papers can be marked with `paper-rag mark PAPER_ID --label manual`. Labels are reversible private overlays; they never change scientific verification status. Use `retrieve --label manual` only when the user asks to restrict scope. Keep uncertain historical provenance unclassified/historical rather than inventing manual labels.

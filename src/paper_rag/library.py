@@ -8,6 +8,7 @@ def save(p,x):
 def sha(p):return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
 def now():return datetime.datetime.now(datetime.timezone.utc).isoformat()
 def norm(s):return re.sub(r'[^a-z0-9]','',s.lower())
+from . import preferences
 class Library:
  def __init__(self,config=None):
   self.c=read_config(config);self.root=pathlib.Path(self.c['library_root']);self.base=pathlib.Path(self.c['base_root']) if self.c.get('base_root') else None;self.root.mkdir(parents=True,exist_ok=True)
@@ -42,13 +43,19 @@ class Library:
   if not (self.root/'frozen_assets.json').exists():raise ValueError('Run init first')
   for p,h in load(self.root/'frozen_assets.json').items():
    if sha(p)!=h:raise ValueError('Frozen asset changed: '+p)
- def ingest(self,path,title=None,doi=None):
+ def mark(self,pid,label,reason="Explicit user curation"):
+  with self.lock():
+   if not self.db.execute("select 1 from papers where paper_id=?",(pid,)).fetchone():raise ValueError("Unknown paper ID")
+   return dict(paper_id=pid,**preferences.write(self.root,pid,label,reason))
+ def ingest(self,path,title=None,doi=None,selection_label="manual"):
+  if selection_label not in preferences.LABELS:raise ValueError("Unknown selection label")
   path=pathlib.Path(path).expanduser().resolve()
   if path.suffix.lower()!='.pdf' or not path.is_file():raise ValueError('A local PDF is required')
   digest=sha(path);pid='SRC_'+digest[:16];receipt={'at':now(),'input_path':str(path),'source_sha256':digest,'paper_id':pid,'llm_calls':0}
   with self.lock():
    old=self.db.execute('select paper_id,state from papers where source_sha256=?',(digest,)).fetchone()
    if old:
+    if selection_label=='manual':preferences.write(self.root,old['paper_id'],'manual','User explicitly supplied existing paper')
     result=dict(receipt,status='DUPLICATE_UNCHANGED',existing_paper_id=old['paper_id'],existing_state=old['state']);save(self.root/'receipts'/(uuid.uuid4().hex+'.json'),result);return result
    attempt=uuid.uuid4().hex;stage=self.root/'staging'/attempt;stage.mkdir();source=stage/'source.pdf';shutil.copy2(path,source)
    try:
@@ -76,6 +83,7 @@ class Library:
     try:
      self.db.execute('insert into papers values (?,?,?,?,?,?,?,?,?,?,?)',(pid,resolved_title,doi,digest,str(dest/'source.pdf'),str(dest),'USER_IMPORT','READY','UNREVIEWED_SOURCE_ONLY',now(),json.dumps(meta)));self.event('INGEST_COMMITTED',pid,meta);self.db.commit()
     except Exception:self.db.rollback();raise
+    preferences.write(self.root,pid,selection_label,'Ingestion source declared by caller')
     receipt.update(status='READY',paper_id=pid,title=resolved_title,related_versions=matching,document_dir=str(dest),metadata=meta)
    except Exception as e:
     self.db.rollback();receipt.update(status='FAILED_NOT_INDEXED',error=str(e),preserved_staging=str(dest if 'dest' in locals() and dest.exists() else stage));self.event('INGEST_FAILED',pid,receipt);self.db.commit()
@@ -93,7 +101,7 @@ class Library:
    if r['origin']=='FROZEN_BASE':raise ValueError('Frozen baseline membership cannot be changed by this command')
    self.db.execute('update papers set state=? where paper_id=?',('READY' if active else 'INACTIVE',pid));self.event('RESTORE' if active else 'DEACTIVATE',pid,{'physical_files_deleted':False});self.db.commit()
   return {'paper_id':pid,'state':'READY' if active else 'INACTIVE','physical_files_deleted':False}
- def retrieve(self,question,papers=None,budget=9000):
+ def retrieve(self,question,papers=None,budget=9000,label=None):
   self.verify_base();t=time.time()
   from llama_index.core.schema import TextNode
   from llama_index.core import StorageContext
@@ -103,6 +111,10 @@ class Library:
   rows=[dict(r) for r in self.db.execute("select * from papers where state='READY'")];rows=[r for r in rows if not papers or r['paper_id'] in papers]
   if papers and set(papers)-{r['paper_id'] for r in rows}:raise ValueError('Unknown or inactive --paper-id')
   if not rows:raise ValueError('No searchable papers; ingest a PDF first')
+  prefs=preferences.read(self.root)
+  if label:
+   rows=[r for r in rows if preferences.describe(r['paper_id'],prefs)['selection_label']==label]
+   if not rows:raise ValueError('No searchable papers with requested label')
   by={r['paper_id']:r for r in rows};raw=[n for n in load(self.base/'hierarchical_nodes.json') if n['metadata']['paper_id'] in by] if self.base else [];groups={}
   for r in rows:
    pid=r['paper_id'];meta=json.loads(r['metadata_json']);bundle=pathlib.Path(r['bundle_path']) if r['bundle_path'] else None
@@ -117,7 +129,8 @@ class Library:
    if (cache/'COMPLETE.json').exists():bm=BM25Retriever.from_persist_dir(str(cache))
    else:
     bm=BM25Retriever.from_defaults(nodes=leaf_nodes,similarity_top_k=top_k);cache.mkdir(exist_ok=True);bm.persist(str(cache));save(cache/'COMPLETE.json',{'key':key,'at':now()})
-  bm.similarity_top_k=top_k;ret=AutoMergingRetriever(bm,store,simple_ratio_thresh=.5);hits=ret.retrieve(question);terms=re.findall(r'\b(?:[A-Z][A-Za-z0-9]*[A-Z0-9][A-Za-z0-9-]*|[A-Z][a-z]+[A-Z][A-Za-z0-9-]*)\b',question);exact=sorted([n for n in nodes if any(re.search(r'(?<!\w)'+re.escape(z)+r'(?!\w)',n.text) for z in terms)],key=lambda n:-sum(n.text.lower().count(z.lower()) for z in terms))[:2]
+  bm.similarity_top_k=top_k;ret=AutoMergingRetriever(bm,store,simple_ratio_thresh=.5);hits=preferences.rerank(ret.retrieve(question),prefs);terms=re.findall(r'\b(?:[A-Z][A-Za-z0-9]*[A-Z0-9][A-Za-z0-9-]*|[A-Z][a-z]+[A-Z][A-Za-z0-9-]*)\b',question);exact=sorted([n for n in nodes if any(re.search(r'(?<!\w)'+re.escape(z)+r'(?!\w)',n.text) for z in terms)],key=lambda n:-sum(n.text.lower().count(z.lower()) for z in terms))[:2]
+  scores={h.node.node_id:float(h.score or 0) for h in hits}
   evidence=[];seen=set();used=0;skipped=[]
   for n in [h.node for h in hits]+exact:
    if n.node_id in seen:continue
@@ -136,9 +149,9 @@ class Library:
     end=offset+len(c['text'])
     if end>start and offset<start+len(n.text):spans.append({'chunk_id':c['id'],'pages':c['pages'],'doc_items':c['doc_items'],'paragraph_char_span':[max(0,start-offset),min(len(c['text']),start+len(n.text)-offset)]})
     offset=end+2
-   evidence.append({'evidence_id':'LI:'+n.node_id,'paper_id':pid,'title':r['title'],'text':n.text,'heading':heading,'section_char_span':[start,start+len(n.text)],'parent_section_chars':len(section),'parent_section_sha256':hashlib.sha256(section.encode()).hexdigest(),'paragraph_spans':spans,'pages':sorted({p for s in spans for p in s['pages']}),'source_path':r['source_path'],'source_sha256':r['source_sha256'],'origin':r['origin'],'verification':r['verification'],'role_candidate':'COMPARATOR_OR_RELATED' if re.search('baseline|compar|related',heading,re.I) else 'UNRESOLVED','role_verified':False,'hash_status':'MATCHED'})
+   evidence.append({'evidence_id':'LI:'+n.node_id,'paper_id':pid,'title':r['title'],'text':n.text,'heading':heading,'section_char_span':[start,start+len(n.text)],'parent_section_chars':len(section),'parent_section_sha256':hashlib.sha256(section.encode()).hexdigest(),'paragraph_spans':spans,'pages':sorted({p for s in spans for p in s['pages']}),'source_path':r['source_path'],'source_sha256':r['source_sha256'],'base_retrieval_score':scores.get(n.node_id),'adjusted_retrieval_score':scores[n.node_id]*preferences.describe(pid,prefs)['retrieval_multiplier'] if scores.get(n.node_id,0)>0 else scores.get(n.node_id),**preferences.describe(pid,prefs),'origin':r['origin'],'verification':r['verification'],'role_candidate':'COMPARATOR_OR_RELATED' if re.search('baseline|compar|related',heading,re.I) else 'UNRESOLVED','role_verified':False,'hash_status':'MATCHED'})
    used+=len(n.text)
-  record=self.root/'queries'/(datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S')+'_'+uuid.uuid4().hex[:8]);record.mkdir();packet={'question':question,'search_scope':[r['paper_id'] for r in rows],'evidence':evidence,'evidence_characters':used,'budget_characters':budget,'skipped_oversize_node_ids':skipped,'seconds':time.time()-t,'index_fingerprint':key,'claims_used':False,'certified':False};save(record/'evidence.json',packet);save(record/'status.json',{'answer':'NOT_RUN','at':now()});return record,packet
+  record=self.root/'queries'/(datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S')+'_'+uuid.uuid4().hex[:8]);record.mkdir();packet={'question':question,'search_scope':[r['paper_id'] for r in rows],'evidence':evidence,'evidence_characters':used,'budget_characters':budget,'skipped_oversize_node_ids':skipped,'seconds':time.time()-t,'index_fingerprint':key,'selection_policy':{'manual_multiplier':1.1,'scope':'rerank retrieved candidates; exact-term supplements unchanged','label_filter':label},'claims_used':False,'certified':False};save(record/'evidence.json',packet);save(record/'status.json',{'answer':'NOT_RUN','at':now()});return record,packet
 
 def build_nodes(pid,title,digest,chunks):
  from llama_index.core import Document
@@ -153,10 +166,11 @@ def main():
  for name in ['status','sync-inbox']:sub.add_parser(name)
  q=sub.add_parser('init');q.add_argument('--root',help='Private data directory, outside this repository')
  q=sub.add_parser('list');q.add_argument('term',nargs='?',default='')
- q=sub.add_parser('ingest');q.add_argument('pdf');q.add_argument('--title');q.add_argument('--doi')
+ q=sub.add_parser('ingest');q.add_argument('pdf');q.add_argument('--title');q.add_argument('--doi');q.add_argument('--selection-label',choices=sorted(preferences.LABELS),default='manual')
  for name in ['deactivate','restore']:q=sub.add_parser(name);q.add_argument('paper_id')
  for name in ['retrieve','ask']:
-  q=sub.add_parser(name);q.add_argument('question');q.add_argument('--search-query',help='Optional English retrieval phrasing; original question retained for the answer');q.add_argument('--paper-id',action='append');q.add_argument('--max-evidence-chars',type=int,default=9000)
+  q=sub.add_parser(name);q.add_argument('question');q.add_argument('--search-query',help='Optional English retrieval phrasing; original question retained for the answer');q.add_argument('--paper-id',action='append');q.add_argument('--max-evidence-chars',type=int,default=9000);q.add_argument('--label',choices=sorted(preferences.LABELS))
+ q=sub.add_parser('mark');q.add_argument('paper_id');q.add_argument('--label',choices=sorted(preferences.LABELS),required=True)
  a=p.parse_args()
  if a.cmd=='init':
   from .config import initialize_config
@@ -164,12 +178,13 @@ def main():
  lib=Library(a.config)
  if a.cmd=='init':out=lib.initialize()
  elif a.cmd=='status':out=lib.status()
- elif a.cmd=='list':out=lib.list(a.term)
- elif a.cmd=='ingest':out=lib.ingest(a.pdf,a.title,a.doi)
+ elif a.cmd=='list':out=[dict(r,**preferences.describe(r['paper_id'],preferences.read(lib.root))) for r in lib.list(a.term)]
+ elif a.cmd=='mark':out=lib.mark(a.paper_id,a.label)
+ elif a.cmd=='ingest':out=lib.ingest(a.pdf,a.title,a.doi,a.selection_label)
  elif a.cmd=='sync-inbox':out=lib.sync()
  elif a.cmd in ['deactivate','restore']:out=lib.deactivate(a.paper_id,a.cmd=='restore')
  else:
-  record,packet=lib.retrieve(a.search_query or a.question,a.paper_id,a.max_evidence_chars)
+  record,packet=lib.retrieve(a.search_query or a.question,a.paper_id,a.max_evidence_chars,a.label)
   if a.search_query:packet['retrieval_query']=a.search_query;packet['question']=a.question;save(record/'evidence.json',packet)
   if a.cmd=='ask':
    from .answer import answer

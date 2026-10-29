@@ -42,3 +42,15 @@ paper-rag ask 'Your question' --search-query 'Faithful English retrieval terms'
 Each invocation writes evidence, first-pass output, events, usage and validation status. No automatic score-improving retries. The caller must review measured usage after each call. Subscription quotas and model availability are account-specific; this package cannot translate tokens into a universal subscription percentage. No live answer-model call is required or exercised by the test suite.
 
 For a Chinese question use faithful English search terms, retaining the original question; do not add expected answer facts. Fetch full parent sections and inspect page images before interpreting formulas or table columns. Explicitly separate direct evidence, inference, missing information, and unresolved ownership.
+
+## Manual selection priority
+
+Direct ingestion and inbox imports default to `manual`. Explicit discovery batches must use `paper-rag ingest file.pdf --selection-label citation_discovery`, or add `"selection_label": "citation_discovery"` to each acquisition manifest item. Directly re-supplying an existing PDF marks it manual without duplicating its source.
+
+```bash
+paper-rag mark PAPER_ID --label manual
+paper-rag mark PAPER_ID --label citation_discovery
+paper-rag retrieve 'question' --label manual
+```
+
+Labels (`manual`, `citation_discovery`, `historical`, `unclassified`) live in a private `paper_preferences.json` overlay with append-only change receipts. No original database, scientific status or source bundle is rewritten. MCP list/search responses expose the label; search also reports base/adjusted scores and multiplier. Positive candidate relevance scores for manual papers receive a fixed 10% boost. This reranks retrieved candidates only: it does not force irrelevant papers into results, expand candidate recall, or alter exact-term supplements. Explicit paper scopes remain respected. Remove priority by changing the label.
