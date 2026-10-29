@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paper-rag-workflow"
+version = "0.1.0"
+description = "Incremental source-first scientific library with provenance and read-only MCP"
+requires-python = ">=3.11,<3.14"
+license = "MIT"
+dependencies = [
+  "docling==2.143.1",
+  "llama-index-core==0.14.25",
+  "llama-index-retrievers-bm25==0.8.0",
+  "pymupdf==2.0",
+  "mcp==1.30.0",
+  "requests>=2.32,<3",
+  "networkx>=3.4,<4",
+  "scikit-learn>=1.5,<2",
+]
+
+[project.scripts]
+paper-rag = "paper_rag.library:main"
+paper-rag-mcp = "paper_rag.server:main"
+paper-rag-discover = "paper_rag.discovery:main"
+paper-rag-acquire = "paper_rag.acquire:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
